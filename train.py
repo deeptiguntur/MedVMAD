@@ -12,6 +12,8 @@ import numpy as np
 import os
 import random
 from utils import get_transform
+from CLIP.adapter import CLIP_Inplanted
+
 def setup_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -32,6 +34,10 @@ def train(args):
 
     model, _ = CLIP.load("ViT-L/14@336px", device=device, design_details = MedVMAD_parameters)
     model.eval()
+  
+    # Image learnable
+    model_img = CLIP_Inplanted(clip_model=model, features=args.features_list).to(device)
+    model_img.eval()
 
     train_data = Dataset(root=args.train_data_path, transform=preprocess, target_transform=target_transform, dataset_name = args.dataset)
     train_dataloader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
@@ -42,7 +48,11 @@ def train(args):
     model.to(device)
     model.visual.DAPM_replace(DPAM_layer = 20)
     ##########################################################################################
-    optimizer = torch.optim.Adam(list(prompt_learner.parameters()), lr=args.learning_rate, betas=(0.5, 0.999))
+    # Text optimizer
+    optimizer_text = torch.optim.Adam(list(prompt_learner.parameters()), lr=args.learning_rate, betas=(0.5, 0.999))
+    # Img optimizer
+    seg_optimizer = torch.optim.Adam(list(model_img.seg_adapters.parameters()), lr=args.learning_rate, betas=(0.5, 0.999))
+    det_optimizer = torch.optim.Adam(list(model_img.det_adapters.parameters()), lr=args.learning_rate, betas=(0.5, 0.999))
 
     # losses
     loss_focal = FocalLoss()
@@ -65,28 +75,56 @@ def train(args):
             gt[gt > 0.5] = 1
             gt[gt <= 0.5] = 0
 
-            with torch.no_grad():
-                # Apply DPAM to the layer from 6 to 24
-                # DPAM_layer represents the number of layer refined by DPAM from top to bottom
-                # DPAM_layer = 1, no DPAM is used
-                # DPAM_layer = 20 as default
-                image_features, patch_features = model.encode_image(image, args.features_list, DPAM_layer = 20)
-                image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+            # with torch.no_grad():
+            #     # Apply DPAM to the layer from 6 to 24
+            #     # DPAM_layer represents the number of layer refined by DPAM from top to bottom
+            #     # DPAM_layer = 1, no DPAM is used
+            #     # DPAM_layer = 20 as default
+            #     image_features, patch_features = model.encode_image(image, args.features_list, DPAM_layer = 20)
+            #     image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+
+            ##############################################################################################
+            # Image tokens
+            image_sq = image.squeeze(0).to(device)
+            _, seg_patch_tokens, det_patch_tokens = model_img(image_sq)
+            seg_patch_tokens = [p[0, 1:, :] for p in seg_patch_tokens]
+            det_patch_tokens = [p[0, 1:, :] for p in det_patch_tokens]
                     
-           ####################################
+           ##################################################################################################
+            # Prompt tokens
             prompts, tokenized_prompts, compound_prompts_text = prompt_learner(cls_id = None)
             text_features = model.encode_text_learn(prompts, tokenized_prompts, compound_prompts_text).float()
             text_features = torch.stack(torch.chunk(text_features, dim = 0, chunks = 2), dim = 1)
             text_features = text_features/text_features.norm(dim=-1, keepdim=True)
             # Apply DPAM surgery
-            text_probs = image_features.unsqueeze(1) @ text_features.permute(0, 2, 1)
-            text_probs = text_probs[:, 0, ...]/0.07
-            image_loss = F.cross_entropy(text_probs.squeeze(), label.long().cuda())
+            # text_probs = image_features.unsqueeze(1) @ text_features.permute(0, 2, 1)
+            # text_probs = text_probs[:, 0, ...]/0.07
+            # image_loss = F.cross_entropy(text_probs.squeeze(), label.long().cuda())
+            ################################################################################################
+            image_loss = 0
+            image_label = image_label.squeeze(0).to(device)
+            for layer in range(len(det_patch_tokens)):
+                det_patch_tokens[layer] = det_patch_tokens[layer] / det_patch_tokens[layer].norm(dim=-1, keepdim=True)
+                # Matrix mul
+                # Multiply by 100
+                anomaly_map = (det_patch_tokens[layer] @ text_features).unsqueeze(0)    
+                anomaly_map = torch.softmax(anomaly_map, dim=-1)[:, :, 1]
+                anomaly_score = torch.mean(anomaly_map, dim=-1)
+                image_loss += F.cross_entropy(anomaly_score.squeeze(), label.long().cuda())
+
+            # Existing
             image_loss_list.append(image_loss.item())
             #########################################################################
             similarity_map_list = []
             # similarity_map_list.append(similarity_map)
-            for idx, patch_feature in enumerate(patch_features):
+            # for idx, patch_feature in enumerate(patch_features):
+            #     if idx >= args.feature_map_layer[0]:
+            #         patch_feature = patch_feature/ patch_feature.norm(dim = -1, keepdim = True)
+            #         similarity, _ = CLIP.compute_similarity(patch_feature, text_features[0])
+            #         similarity_map = CLIP.get_similarity_map(similarity[:, 1:, :], args.image_size).permute(0, 3, 1, 2)
+            #         similarity_map_list.append(similarity_map)
+
+            for idx, patch_feature in enumerate(seg_patch_tokens):
                 if idx >= args.feature_map_layer[0]:
                     patch_feature = patch_feature/ patch_feature.norm(dim = -1, keepdim = True)
                     similarity, _ = CLIP.compute_similarity(patch_feature, text_features[0])
@@ -99,9 +137,13 @@ def train(args):
                 loss += loss_dice(similarity_map_list[i][:, 1, :, :], gt)
                 loss += loss_dice(similarity_map_list[i][:, 0, :, :], 1-gt)
 
-            optimizer.zero_grad()
+            optimizer_text.zero_grad()
+            seg_optimizer.zero_grad()
+            det_optimizer.zero_grad()
             (loss+image_loss).backward()
-            optimizer.step()
+            optimizer_text.step()
+            seg_optimizer.step()
+            det_optimizer.step()
             loss_list.append(loss.item())
         # logs
         if (epoch + 1) % args.print_freq == 0:
@@ -111,6 +153,8 @@ def train(args):
         if (epoch + 1) % args.save_freq == 0:
             ckp_path = os.path.join(args.save_path, 'epoch_' + str(epoch + 1) + '.pth')
             torch.save({"prompt_learner": prompt_learner.state_dict()}, ckp_path)
+            # Image learnable save
+            torch.save({'seg_adapters': model_img.seg_adapters.state_dict(), 'det_adapters': model_img.det_adapters.state_dict()}, ckp_path)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser("MedVMAD", add_help=True)
