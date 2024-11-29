@@ -46,7 +46,7 @@ def train(args):
     prompt_learner = MedVMAD_PromptLearner(model.to("cpu"), MedVMAD_parameters)
     prompt_learner.to(device)
     model.to(device)
-    model.visual.DAPM_replace(DPAM_layer = 20)
+    # model.visual.DAPM_replace(DPAM_layer = 20)
     ##########################################################################################
     # Text optimizer
     optimizer_text = torch.optim.Adam(list(prompt_learner.parameters()), lr=args.learning_rate, betas=(0.5, 0.999))
@@ -57,6 +57,7 @@ def train(args):
     # losses
     loss_focal = FocalLoss()
     loss_dice = BinaryDiceLoss()
+    loss_bce = torch.nn.BCEWithLogitsLoss()
     
     
     model.eval()
@@ -85,8 +86,8 @@ def train(args):
 
             ##############################################################################################
             # Image tokens
-            image_sq = image.squeeze(0).to(device)
-            _, seg_patch_tokens, det_patch_tokens = model_img(image_sq)
+            # image_sq = image.squeeze(0).to(device)
+            _, seg_patch_tokens, det_patch_tokens = model_img(image)
             seg_patch_tokens = [p[0, 1:, :] for p in seg_patch_tokens]
             det_patch_tokens = [p[0, 1:, :] for p in det_patch_tokens]
                     
@@ -102,15 +103,16 @@ def train(args):
             # image_loss = F.cross_entropy(text_probs.squeeze(), label.long().cuda())
             ################################################################################################
             image_loss = 0
-            image_label = image_label.squeeze(0).to(device)
+            image_label = label.squeeze(0).to(device).float()
             for layer in range(len(det_patch_tokens)):
                 det_patch_tokens[layer] = det_patch_tokens[layer] / det_patch_tokens[layer].norm(dim=-1, keepdim=True)
                 # Matrix mul
                 # Multiply by 100
-                anomaly_map = (det_patch_tokens[layer] @ text_features).unsqueeze(0)    
+                anomaly_map = (det_patch_tokens[layer] @ torch.transpose(text_features[0], 0, 1)).unsqueeze(0)    
                 anomaly_map = torch.softmax(anomaly_map, dim=-1)[:, :, 1]
-                anomaly_score = torch.mean(anomaly_map, dim=-1)
-                image_loss += F.cross_entropy(anomaly_score.squeeze(), label.long().cuda())
+                anomaly_score = torch.mean(anomaly_map)
+                # image_loss += F.cross_entropy(anomaly_score.squeeze(), image_label.long().cuda())
+                image_loss += loss_bce(anomaly_score, image_label)
 
             # Existing
             image_loss_list.append(image_loss.item())
@@ -124,18 +126,34 @@ def train(args):
             #         similarity_map = CLIP.get_similarity_map(similarity[:, 1:, :], args.image_size).permute(0, 3, 1, 2)
             #         similarity_map_list.append(similarity_map)
 
-            for idx, patch_feature in enumerate(seg_patch_tokens):
-                if idx >= args.feature_map_layer[0]:
-                    patch_feature = patch_feature/ patch_feature.norm(dim = -1, keepdim = True)
-                    similarity, _ = CLIP.compute_similarity(patch_feature, text_features[0])
-                    similarity_map = CLIP.get_similarity_map(similarity[:, 1:, :], args.image_size).permute(0, 3, 1, 2)
-                    similarity_map_list.append(similarity_map)
+            # for idx, patch_feature in enumerate(seg_patch_tokens):
+            #     if idx >= args.feature_map_layer[0]:
+            #         patch_feature = patch_feature/ patch_feature.norm(dim = -1, keepdim = True)
+            #         similarity, _ = CLIP.compute_similarity(patch_feature, text_features[0])
+            #         similarity_map = CLIP.get_similarity_map(similarity[:, 1:, :], args.image_size).permute(0, 3, 1, 2)
+            #         similarity_map_list.append(similarity_map)
+
+            seg_loss=0
+            for layer in range(len(seg_patch_tokens)):
+                seg_patch_tokens[layer] = seg_patch_tokens[layer] / seg_patch_tokens[layer].norm(dim=-1, keepdim=True)
+                # print(seg_patch_tokens[layer].shape, text_feature_list[seg_idx].shape) # torch.Size([289, 768]) torch.Size([768, 2])
+                anomaly_map = (seg_patch_tokens[layer] @ text_features[0].t()).unsqueeze(0)
+                B, L, C = anomaly_map.shape
+                H = int(np.sqrt(L))
+                anomaly_map = F.interpolate(anomaly_map.permute(0, 2, 1).view(B, 2, H, H),
+                                            size=args.image_size, mode='bilinear', align_corners=True)
+                anomaly_map = torch.softmax(anomaly_map, dim=1)
+                seg_loss += loss_focal(anomaly_map, gt)
+                seg_loss += loss_dice(anomaly_map[:, 1, :, :], gt)
+                seg_loss += loss_dice(anomaly_map[:, 0, :, :], 1-gt)
 
             loss = 0
-            for i in range(len(similarity_map_list)):
-                loss += loss_focal(similarity_map_list[i], gt)
-                loss += loss_dice(similarity_map_list[i][:, 1, :, :], gt)
-                loss += loss_dice(similarity_map_list[i][:, 0, :, :], 1-gt)
+            # for i in range(len(similarity_map_list)):
+            #     loss += loss_focal(similarity_map_list[i], gt)
+            #     loss += loss_dice(similarity_map_list[i][:, 1, :, :], gt)
+            #     loss += loss_dice(similarity_map_list[i][:, 0, :, :], 1-gt)
+
+            loss += seg_loss
 
             optimizer_text.zero_grad()
             seg_optimizer.zero_grad()
@@ -152,9 +170,9 @@ def train(args):
         # save model
         if (epoch + 1) % args.save_freq == 0:
             ckp_path = os.path.join(args.save_path, 'epoch_' + str(epoch + 1) + '.pth')
-            torch.save({"prompt_learner": prompt_learner.state_dict()}, ckp_path)
+            # torch.save({"prompt_learner": prompt_learner.state_dict()}, ckp_path)
             # Image learnable save
-            torch.save({'seg_adapters': model_img.seg_adapters.state_dict(), 'det_adapters': model_img.det_adapters.state_dict()}, ckp_path)
+            torch.save({"prompt_learner": prompt_learner.state_dict(), 'seg_adapters': model_img.seg_adapters.state_dict(), 'det_adapters': model_img.det_adapters.state_dict()}, ckp_path)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser("MedVMAD", add_help=True)
@@ -172,8 +190,8 @@ if __name__ == '__main__':
 
     parser.add_argument("--epoch", type=int, default=2, help="epochs")
     parser.add_argument("--learning_rate", type=float, default=0.001, help="learning rate")
-    parser.add_argument("--batch_size", type=int, default=8, help="batch size")
-    parser.add_argument("--image_size", type=int, default=518, help="image size")
+    parser.add_argument("--batch_size", type=int, default=1, help="batch size")
+    parser.add_argument("--image_size", type=int, default=336, help="image size")
     parser.add_argument("--print_freq", type=int, default=1, help="print frequency")
     parser.add_argument("--save_freq", type=int, default=1, help="save frequency")
     parser.add_argument("--seed", type=int, default=111, help="random seed")

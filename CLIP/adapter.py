@@ -47,8 +47,6 @@ class CLIP_Inplanted(nn.Module):
         x = torch.cat(
             [self.image_encoder.class_embedding.to(x.dtype) + torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device),
              x], dim=1)
-        print(x.shape)
-        print(self.image_encoder.positional_embedding.to(x.dtype).shape)
         x = x + self.image_encoder.positional_embedding.to(x.dtype)
 
         x = self.image_encoder.patch_dropout(x)
@@ -63,10 +61,22 @@ class CLIP_Inplanted(nn.Module):
         for i in range(24):
             if i + 1 == 12:
                 x, attn = self.image_encoder.transformer.resblocks[i](x, attn_mask=None)
+                # print()
+                # print("Helloooooooooooo 1", x.shape)
+                # print("Helloooooooooooo 1", attn.shape)
+                # print()
+                # x = x[0]
+                # attn = x[1]
                 attn_out.append(attn)
             else:
                 x, attn_map = self.image_encoder.transformer.resblocks[i](x, attn_mask=None)
+                # print()
+                # print("Helloooooooooooo 2", x.shape)
+                # print()
+                # attn_map = x[1]
             if (i + 1) in self.features:
+                if isinstance(x, list):
+                    x = torch.stack(x)
                 seg_adapt_med, seg_adapt_out = self.seg_adapters[self.features.index(i+1)](x)
                 det_adapt_med, det_adapt_out = self.det_adapters[self.features.index(i+1)](x)
 

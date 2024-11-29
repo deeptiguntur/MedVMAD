@@ -1,6 +1,8 @@
 from torch import nn
 from .CLIP import CLIP
 from .MedVMAD import MedVMAD
+from typing import Optional, Tuple, Union
+
 
 def build_model(name: str, state_dict: dict, design_details = None):
     vit = "visual.proj" in state_dict
