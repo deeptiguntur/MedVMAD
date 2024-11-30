@@ -17,6 +17,7 @@ def generate_class_info(dataset_name):
 
 class Dataset(data.Dataset):
     def __init__(self, root, transform, target_transform, dataset_name, mode='train'):
+        print(mode)
         self.root = root
         self.transform = transform
         self.target_transform = target_transform

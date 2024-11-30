@@ -28,10 +28,17 @@ def train(args):
 
     preprocess, target_transform = get_transform(args)
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    # device = "cpu"
     print(device)
 
     MedVMAD_parameters = {"Prompt_length": args.n_ctx, "learnabel_text_embedding_depth": args.depth, "learnabel_text_embedding_length": args.t_n_ctx}
 
+    # ViT-L/14 (Large, Patch Size 14):
+
+    # Number of Layers (Transformer Blocks): 24
+    # Embedding Dimension: 768
+    # Number of Attention Heads: 12
+    # Patch Size: 14x14
     model, _ = CLIP.load("ViT-L/14@336px", device=device, design_details = MedVMAD_parameters)
     model.eval()
   
@@ -88,8 +95,11 @@ def train(args):
             # Image tokens
             # image_sq = image.squeeze(0).to(device)
             _, seg_patch_tokens, det_patch_tokens = model_img(image)
-            seg_patch_tokens = [p[0, 1:, :] for p in seg_patch_tokens]
-            det_patch_tokens = [p[0, 1:, :] for p in det_patch_tokens]
+            # seg_patch_tokens = [p[0, 1:, :] for p in seg_patch_tokens]
+            seg_patch_tokens = [p[:, 1:, :] for p in seg_patch_tokens]
+            # print(len(seg_patch_tokens))
+            # det_patch_tokens = [p[0, 1:, :] for p in det_patch_tokens]
+            det_patch_tokens = [p[:, 1:, :] for p in det_patch_tokens]
                     
            ##################################################################################################
             # Prompt tokens
@@ -103,14 +113,26 @@ def train(args):
             # image_loss = F.cross_entropy(text_probs.squeeze(), label.long().cuda())
             ################################################################################################
             image_loss = 0
+            # image_label = label.squeeze(0).to(device).float()
+            # for layer in range(len(det_patch_tokens)):
+            #     det_patch_tokens[layer] = det_patch_tokens[layer] / det_patch_tokens[layer].norm(dim=-1, keepdim=True)
+                
+            #     anomaly_map = (det_patch_tokens[layer] @ text_features[0].t()).unsqueeze(0)
+            #     anomaly_map = torch.softmax(anomaly_map, dim=-1)[:, :, 1]
+            #     # anomaly_score = torch.mean(anomaly_map, dim=1)
+            #     anomaly_score = torch.mean(anomaly_map)
+            #     image_loss += loss_bce(anomaly_score, image_label)
+
             image_label = label.squeeze(0).to(device).float()
             for layer in range(len(det_patch_tokens)):
                 det_patch_tokens[layer] = det_patch_tokens[layer] / det_patch_tokens[layer].norm(dim=-1, keepdim=True)
                 # Matrix mul
                 # Multiply by 100
-                anomaly_map = (det_patch_tokens[layer] @ torch.transpose(text_features[0], 0, 1)).unsqueeze(0)    
+                # anomaly_map = (det_patch_tokens[layer] @ torch.transpose(text_features[0], 0, 1)).unsqueeze(0)         
+                anomaly_map = (det_patch_tokens[layer] @ torch.transpose(text_features[0], 0, 1))       
                 anomaly_map = torch.softmax(anomaly_map, dim=-1)[:, :, 1]
-                anomaly_score = torch.mean(anomaly_map)
+                # anomaly_score = torch.mean(anomaly_map)
+                anomaly_score = torch.mean(anomaly_map, dim=1)
                 # image_loss += F.cross_entropy(anomaly_score.squeeze(), image_label.long().cuda())
                 image_loss += loss_bce(anomaly_score, image_label)
 
@@ -126,32 +148,28 @@ def train(args):
             #         similarity_map = CLIP.get_similarity_map(similarity[:, 1:, :], args.image_size).permute(0, 3, 1, 2)
             #         similarity_map_list.append(similarity_map)
 
-            # for idx, patch_feature in enumerate(seg_patch_tokens):
-            #     if idx >= args.feature_map_layer[0]:
-            #         patch_feature = patch_feature/ patch_feature.norm(dim = -1, keepdim = True)
-            #         similarity, _ = CLIP.compute_similarity(patch_feature, text_features[0])
-            #         similarity_map = CLIP.get_similarity_map(similarity[:, 1:, :], args.image_size).permute(0, 3, 1, 2)
-            #         similarity_map_list.append(similarity_map)
-
             seg_loss=0
             for layer in range(len(seg_patch_tokens)):
                 seg_patch_tokens[layer] = seg_patch_tokens[layer] / seg_patch_tokens[layer].norm(dim=-1, keepdim=True)
                 # print(seg_patch_tokens[layer].shape, text_feature_list[seg_idx].shape) # torch.Size([289, 768]) torch.Size([768, 2])
-                anomaly_map = (seg_patch_tokens[layer] @ text_features[0].t()).unsqueeze(0)
+                # anomaly_map = (seg_patch_tokens[layer] @ text_features[0].t()).unsqueeze(0)
+                anomaly_map = (seg_patch_tokens[layer] @ text_features[0].t())
+                # print(anomaly_map.shape)
                 B, L, C = anomaly_map.shape
                 H = int(np.sqrt(L))
                 anomaly_map = F.interpolate(anomaly_map.permute(0, 2, 1).view(B, 2, H, H),
                                             size=args.image_size, mode='bilinear', align_corners=True)
                 anomaly_map = torch.softmax(anomaly_map, dim=1)
-                seg_loss += loss_focal(anomaly_map, gt)
-                seg_loss += loss_dice(anomaly_map[:, 1, :, :], gt)
-                seg_loss += loss_dice(anomaly_map[:, 0, :, :], 1-gt)
+                similarity_map_list.append(anomaly_map)
+                # seg_loss += loss_focal(anomaly_map, gt)
+                # seg_loss += loss_dice(anomaly_map[:, 1, :, :], gt)
+                # seg_loss += loss_dice(anomaly_map[:, 0, :, :], 1-gt)
 
             loss = 0
-            # for i in range(len(similarity_map_list)):
-            #     loss += loss_focal(similarity_map_list[i], gt)
-            #     loss += loss_dice(similarity_map_list[i][:, 1, :, :], gt)
-            #     loss += loss_dice(similarity_map_list[i][:, 0, :, :], 1-gt)
+            for i in range(len(similarity_map_list)):
+                loss += loss_focal(similarity_map_list[i], gt)
+                loss += loss_dice(similarity_map_list[i][:, 1, :, :], gt)
+                loss += loss_dice(similarity_map_list[i][:, 0, :, :], 1-gt)
 
             loss += seg_loss
 
@@ -188,9 +206,9 @@ if __name__ == '__main__':
     parser.add_argument("--feature_map_layer", type=int, nargs="+", default=[0, 1, 2, 3], help="zero shot")
     parser.add_argument("--features_list", type=int, nargs="+", default=[6, 12, 18, 24], help="features used")
 
-    parser.add_argument("--epoch", type=int, default=2, help="epochs")
+    parser.add_argument("--epoch", type=int, default=10, help="epochs")
     parser.add_argument("--learning_rate", type=float, default=0.001, help="learning rate")
-    parser.add_argument("--batch_size", type=int, default=1, help="batch size")
+    parser.add_argument("--batch_size", type=int, default=8, help="batch size")
     parser.add_argument("--image_size", type=int, default=336, help="image size")
     parser.add_argument("--print_freq", type=int, default=1, help="print frequency")
     parser.add_argument("--save_freq", type=int, default=1, help="save frequency")

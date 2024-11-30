@@ -25,9 +25,7 @@ import cv2
 
 def apply_ad_scoremap(image, scoremap, alpha=0.5):
     np_image = np.asarray(image, dtype=float)
-    print('score1', scoremap.shape)
     scoremap = (scoremap * 255).astype(np.uint8)
-    print("score",scoremap.shape)
     scoremap = cv2.applyColorMap(scoremap, cv2.COLORMAP_JET)
     scoremap = cv2.cvtColor(scoremap, cv2.COLOR_BGR2RGB)
     return (alpha * np_image + (1 - alpha) * scoremap).astype(np.uint8)
@@ -40,7 +38,6 @@ def visualizer(path, anomaly_map, img_size):
     vis = apply_ad_scoremap(vis, mask)
     vis = cv2.cvtColor(vis, cv2.COLOR_RGB2BGR)  # BGR
     save_vis = os.path.join(dirname, f'anomaly_map_{filename}')
-    print(save_vis)
     cv2.imwrite(save_vis, vis)
 
 from scipy.ndimage import gaussian_filter
@@ -94,6 +91,7 @@ def test(args):
         # text_probs = det_patch_tokens @ text_features.permute(0, 2, 1)
         # text_probs = (text_probs/0.07).softmax(-1)
         # text_probs = text_probs[:, 0, 1]
+
         anomaly_map_list = []
         # for idx, patch_feature in enumerate(patch_features):
         #     if idx >= args.feature_map_layer[0]:
@@ -103,15 +101,24 @@ def test(args):
         #         anomaly_map = (similarity_map[...,1] + 1 - similarity_map[...,0])/2.0
         #         anomaly_map_list.append(anomaly_map)
 
+        # for layer in range(len(seg_patch_tokens)):
+        #         seg_patch_tokens[layer] /= seg_patch_tokens[layer].norm(dim=-1, keepdim=True)
+        #         anomaly_map = (100.0 * seg_patch_tokens[layer] @ text_features[0].t()).unsqueeze(0)
+        #         B, L, C = anomaly_map.shape
+        #         H = int(np.sqrt(L))
+        #         anomaly_map = F.interpolate(anomaly_map.permute(0, 2, 1).view(B, 2, H, H),
+        #                                     size=args.image_size, mode='bilinear', align_corners=True)
+        #         anomaly_map = torch.softmax(anomaly_map, dim=1)[:, 1, :, :]
+        #         anomaly_map_list.append(anomaly_map.cpu().numpy())
         for layer in range(len(seg_patch_tokens)):
-                seg_patch_tokens[layer] /= seg_patch_tokens[layer].norm(dim=-1, keepdim=True)
-                anomaly_map = (100.0 * seg_patch_tokens[layer] @ text_features[0].t()).unsqueeze(0)
-                B, L, C = anomaly_map.shape
-                H = int(np.sqrt(L))
-                anomaly_map = F.interpolate(anomaly_map.permute(0, 2, 1).view(B, 2, H, H),
-                                            size=args.image_size, mode='bilinear', align_corners=True)
-                anomaly_map = torch.softmax(anomaly_map, dim=1)[:, 1, :, :]
-                anomaly_map_list.append(anomaly_map.cpu().numpy())
+            seg_patch_tokens[layer] /= seg_patch_tokens[layer].norm(dim=-1, keepdim=True)
+            anomaly_map = (100.0 * seg_patch_tokens[layer] @ text_features[0].t()).unsqueeze(0)
+            B, L, C = anomaly_map.shape
+            H = int(np.sqrt(L))
+            anomaly_map = F.interpolate(anomaly_map.permute(0, 2, 1).view(B, 2, H, H),
+                                        size=args.image_size, mode='bilinear', align_corners=True)
+            anomaly_map = torch.softmax(anomaly_map, dim=1)[:, 1, :, :]
+            anomaly_map_list.append(torch.from_numpy(anomaly_map.cpu().numpy()))  # Convert to tensor
 
         anomaly_map = torch.stack(anomaly_map_list)
         

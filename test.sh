@@ -13,8 +13,8 @@ for i in "${!depth[@]}";do
         save_dir=C:/Users/Deept/OneDrive/Desktop/Github/MedVMAD/checkpoint/
         CUDA_VISIBLE_DEVICES=${device} python test.py --dataset brain \
         --data_path C:/Users/Deept/OneDrive/Desktop/Github/MedVMAD/data/Brain_AD/ --save_path ./results/${base_dir}/zero_shot \
-        --checkpoint_path ${save_dir}epoch_2.pth \
-         --features_list 6 12 18 24 --image_size 518 --depth ${depth[i]} --n_ctx ${n_ctx[j]} --t_n_ctx ${t_n_ctx[0]}
+        --checkpoint_path ${save_dir}epoch_10.pth \
+         --features_list 6 12 18 24 --image_size 336 --depth ${depth[i]} --n_ctx ${n_ctx[j]} --t_n_ctx ${t_n_ctx[0]}
     wait
     done
 done

@@ -13,7 +13,7 @@ for i in "${!depth[@]}";do
         save_dir=./checkpoints/${base_dir}/
         CUDA_VISIBLE_DEVICES=${device} python train.py --dataset brain --train_data_path C:/Users/Deept/OneDrive/Desktop/Github/MedVMAD/data/Brain_AD \
         --save_path ${save_dir} \
-        --features_list 6 12 18 24 --image_size 518  --batch_size 8 --print_freq 1 \
+        --features_list 6 12 18 24 --image_size 336  --batch_size 1 --print_freq 1 \
         --epoch 15 --save_freq 1 --depth ${depth[i]} --n_ctx ${n_ctx[j]} --t_n_ctx ${t_n_ctx[0]}
     wait
     done
