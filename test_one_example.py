@@ -112,7 +112,7 @@ def test(args):
         #         anomaly_map_list.append(anomaly_map.cpu().numpy())
         for layer in range(len(seg_patch_tokens)):
             seg_patch_tokens[layer] /= seg_patch_tokens[layer].norm(dim=-1, keepdim=True)
-            anomaly_map = (100.0 * seg_patch_tokens[layer] @ text_features[0].t()).unsqueeze(0)
+            anomaly_map = ( seg_patch_tokens[layer] @ text_features[0].t()).unsqueeze(0)
             B, L, C = anomaly_map.shape
             H = int(np.sqrt(L))
             anomaly_map = F.interpolate(anomaly_map.permute(0, 2, 1).view(B, 2, H, H),
