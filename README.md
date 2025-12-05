@@ -3,7 +3,7 @@
 MedVMAD:Medical imaging Anomaly Detection using Visual Language Models
 
 
-MedVMAD is a framework that uses visual-language models such as CLIP for **anomaly detection** and **localization** in medical images (e.g., brain MRI, Liver-CT). The system aligns image features with clinically relevant text embeddings to identify abnormal regions without requiring extensive labeled datasets. [Paper](Research_paper.pdf.pdf). 
+MedVMAD is a framework that uses visual-language models such as CLIP for **anomaly detection** and **localization** in medical images (e.g., brain MRI, Liver-CT). The system aligns image features with clinically relevant text embeddings to identify abnormal regions without requiring extensive labeled datasets. [Paper](Research_paper.pdf). 
 
 ## Method Overview
 
