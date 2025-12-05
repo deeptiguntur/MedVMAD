@@ -13,8 +13,8 @@ class BrainDatasetLoader(object):
         anomaly_samples = 0
         normal_samples = 0
         for cls_name in self.CLSNAMES:
-            cls_dir = f'{self.root}/data/Brain_AD'
-            for phase in ['train', 'test']:
+            cls_dir = f'{self.root}/data/Brain_AD/Liver_AD/hist_DIY'
+            for phase in ['test']:
                 cls_info = []
                 species = os.listdir(f'{cls_dir}/{phase}')
                 for specie in species:
